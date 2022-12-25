@@ -7557,8 +7557,8 @@ var m$1 = reactDom.exports;
   createRoot = m$1.createRoot;
   hydrateRoot = m$1.hydrateRoot;
 }
-function _extends() {
-  _extends = Object.assign ? Object.assign.bind() : function(target) {
+function _extends$1() {
+  _extends$1 = Object.assign ? Object.assign.bind() : function(target) {
     for (var i = 1; i < arguments.length; i++) {
       var source = arguments[i];
       for (var key in source) {
@@ -7569,7 +7569,7 @@ function _extends() {
     }
     return target;
   };
-  return _extends.apply(this, arguments);
+  return _extends$1.apply(this, arguments);
 }
 var Action;
 (function(Action2) {
@@ -7633,7 +7633,7 @@ function createBrowserHistory(options) {
   var blockers = createEvents();
   if (index2 == null) {
     index2 = 0;
-    globalHistory.replaceState(_extends({}, globalHistory.state, {
+    globalHistory.replaceState(_extends$1({}, globalHistory.state, {
       idx: index2
     }), "");
   }
@@ -7644,7 +7644,7 @@ function createBrowserHistory(options) {
     if (state === void 0) {
       state = null;
     }
-    return readOnly(_extends({
+    return readOnly(_extends$1({
       pathname: location.pathname,
       hash: "",
       search: ""
@@ -7810,9 +7810,239 @@ function parsePath(path) {
  */
 const NavigationContext = /* @__PURE__ */ react.exports.createContext(null);
 const LocationContext = /* @__PURE__ */ react.exports.createContext(null);
+const RouteContext = /* @__PURE__ */ react.exports.createContext({
+  outlet: null,
+  matches: []
+});
 function invariant(cond, message) {
   if (!cond)
     throw new Error(message);
+}
+function matchRoutes(routes, locationArg, basename) {
+  if (basename === void 0) {
+    basename = "/";
+  }
+  let location = typeof locationArg === "string" ? parsePath(locationArg) : locationArg;
+  let pathname = stripBasename(location.pathname || "/", basename);
+  if (pathname == null) {
+    return null;
+  }
+  let branches = flattenRoutes(routes);
+  rankRouteBranches(branches);
+  let matches = null;
+  for (let i = 0; matches == null && i < branches.length; ++i) {
+    matches = matchRouteBranch(branches[i], pathname);
+  }
+  return matches;
+}
+function flattenRoutes(routes, branches, parentsMeta, parentPath) {
+  if (branches === void 0) {
+    branches = [];
+  }
+  if (parentsMeta === void 0) {
+    parentsMeta = [];
+  }
+  if (parentPath === void 0) {
+    parentPath = "";
+  }
+  routes.forEach((route, index2) => {
+    let meta = {
+      relativePath: route.path || "",
+      caseSensitive: route.caseSensitive === true,
+      childrenIndex: index2,
+      route
+    };
+    if (meta.relativePath.startsWith("/")) {
+      !meta.relativePath.startsWith(parentPath) ? invariant(false) : void 0;
+      meta.relativePath = meta.relativePath.slice(parentPath.length);
+    }
+    let path = joinPaths([parentPath, meta.relativePath]);
+    let routesMeta = parentsMeta.concat(meta);
+    if (route.children && route.children.length > 0) {
+      !(route.index !== true) ? invariant(false) : void 0;
+      flattenRoutes(route.children, branches, routesMeta, path);
+    }
+    if (route.path == null && !route.index) {
+      return;
+    }
+    branches.push({
+      path,
+      score: computeScore(path, route.index),
+      routesMeta
+    });
+  });
+  return branches;
+}
+function rankRouteBranches(branches) {
+  branches.sort((a, b) => a.score !== b.score ? b.score - a.score : compareIndexes(a.routesMeta.map((meta) => meta.childrenIndex), b.routesMeta.map((meta) => meta.childrenIndex)));
+}
+const paramRe = /^:\w+$/;
+const dynamicSegmentValue = 3;
+const indexRouteValue = 2;
+const emptySegmentValue = 1;
+const staticSegmentValue = 10;
+const splatPenalty = -2;
+const isSplat = (s) => s === "*";
+function computeScore(path, index2) {
+  let segments = path.split("/");
+  let initialScore = segments.length;
+  if (segments.some(isSplat)) {
+    initialScore += splatPenalty;
+  }
+  if (index2) {
+    initialScore += indexRouteValue;
+  }
+  return segments.filter((s) => !isSplat(s)).reduce((score, segment) => score + (paramRe.test(segment) ? dynamicSegmentValue : segment === "" ? emptySegmentValue : staticSegmentValue), initialScore);
+}
+function compareIndexes(a, b) {
+  let siblings = a.length === b.length && a.slice(0, -1).every((n2, i) => n2 === b[i]);
+  return siblings ? a[a.length - 1] - b[b.length - 1] : 0;
+}
+function matchRouteBranch(branch, pathname) {
+  let {
+    routesMeta
+  } = branch;
+  let matchedParams = {};
+  let matchedPathname = "/";
+  let matches = [];
+  for (let i = 0; i < routesMeta.length; ++i) {
+    let meta = routesMeta[i];
+    let end = i === routesMeta.length - 1;
+    let remainingPathname = matchedPathname === "/" ? pathname : pathname.slice(matchedPathname.length) || "/";
+    let match = matchPath({
+      path: meta.relativePath,
+      caseSensitive: meta.caseSensitive,
+      end
+    }, remainingPathname);
+    if (!match)
+      return null;
+    Object.assign(matchedParams, match.params);
+    let route = meta.route;
+    matches.push({
+      params: matchedParams,
+      pathname: joinPaths([matchedPathname, match.pathname]),
+      pathnameBase: normalizePathname(joinPaths([matchedPathname, match.pathnameBase])),
+      route
+    });
+    if (match.pathnameBase !== "/") {
+      matchedPathname = joinPaths([matchedPathname, match.pathnameBase]);
+    }
+  }
+  return matches;
+}
+function matchPath(pattern, pathname) {
+  if (typeof pattern === "string") {
+    pattern = {
+      path: pattern,
+      caseSensitive: false,
+      end: true
+    };
+  }
+  let [matcher, paramNames] = compilePath(pattern.path, pattern.caseSensitive, pattern.end);
+  let match = pathname.match(matcher);
+  if (!match)
+    return null;
+  let matchedPathname = match[0];
+  let pathnameBase = matchedPathname.replace(/(.)\/+$/, "$1");
+  let captureGroups = match.slice(1);
+  let params = paramNames.reduce((memo, paramName, index2) => {
+    if (paramName === "*") {
+      let splatValue = captureGroups[index2] || "";
+      pathnameBase = matchedPathname.slice(0, matchedPathname.length - splatValue.length).replace(/(.)\/+$/, "$1");
+    }
+    memo[paramName] = safelyDecodeURIComponent(captureGroups[index2] || "");
+    return memo;
+  }, {});
+  return {
+    params,
+    pathname: matchedPathname,
+    pathnameBase,
+    pattern
+  };
+}
+function compilePath(path, caseSensitive, end) {
+  if (caseSensitive === void 0) {
+    caseSensitive = false;
+  }
+  if (end === void 0) {
+    end = true;
+  }
+  let paramNames = [];
+  let regexpSource = "^" + path.replace(/\/*\*?$/, "").replace(/^\/*/, "/").replace(/[\\.*+^$?{}|()[\]]/g, "\\$&").replace(/:(\w+)/g, (_, paramName) => {
+    paramNames.push(paramName);
+    return "([^\\/]+)";
+  });
+  if (path.endsWith("*")) {
+    paramNames.push("*");
+    regexpSource += path === "*" || path === "/*" ? "(.*)$" : "(?:\\/(.+)|\\/*)$";
+  } else {
+    regexpSource += end ? "\\/*$" : "(?:(?=[.~-]|%[0-9A-F]{2})|\\b|\\/|$)";
+  }
+  let matcher = new RegExp(regexpSource, caseSensitive ? void 0 : "i");
+  return [matcher, paramNames];
+}
+function safelyDecodeURIComponent(value, paramName) {
+  try {
+    return decodeURIComponent(value);
+  } catch (error) {
+    return value;
+  }
+}
+function resolvePath(to, fromPathname) {
+  if (fromPathname === void 0) {
+    fromPathname = "/";
+  }
+  let {
+    pathname: toPathname,
+    search = "",
+    hash = ""
+  } = typeof to === "string" ? parsePath(to) : to;
+  let pathname = toPathname ? toPathname.startsWith("/") ? toPathname : resolvePathname(toPathname, fromPathname) : fromPathname;
+  return {
+    pathname,
+    search: normalizeSearch(search),
+    hash: normalizeHash(hash)
+  };
+}
+function resolvePathname(relativePath, fromPathname) {
+  let segments = fromPathname.replace(/\/+$/, "").split("/");
+  let relativeSegments = relativePath.split("/");
+  relativeSegments.forEach((segment) => {
+    if (segment === "..") {
+      if (segments.length > 1)
+        segments.pop();
+    } else if (segment !== ".") {
+      segments.push(segment);
+    }
+  });
+  return segments.length > 1 ? segments.join("/") : "/";
+}
+function resolveTo(toArg, routePathnames, locationPathname) {
+  let to = typeof toArg === "string" ? parsePath(toArg) : toArg;
+  let toPathname = toArg === "" || to.pathname === "" ? "/" : to.pathname;
+  let from;
+  if (toPathname == null) {
+    from = locationPathname;
+  } else {
+    let routePathnameIndex = routePathnames.length - 1;
+    if (toPathname.startsWith("..")) {
+      let toSegments = toPathname.split("/");
+      while (toSegments[0] === "..") {
+        toSegments.shift();
+        routePathnameIndex -= 1;
+      }
+      to.pathname = toSegments.join("/");
+    }
+    from = routePathnameIndex >= 0 ? routePathnames[routePathnameIndex] : "/";
+  }
+  let path = resolvePath(to, from);
+  if (toPathname && toPathname !== "/" && toPathname.endsWith("/") && !path.pathname.endsWith("/")) {
+    path.pathname += "/";
+  }
+  return path;
+}
+function getToPathname(to) {
+  return to === "" || to.pathname === "" ? "/" : typeof to === "string" ? parsePath(to).pathname : to.pathname;
 }
 function stripBasename(pathname, basename) {
   if (basename === "/")
@@ -7826,9 +8056,141 @@ function stripBasename(pathname, basename) {
   }
   return pathname.slice(basename.length) || "/";
 }
+const joinPaths = (paths) => paths.join("/").replace(/\/\/+/g, "/");
 const normalizePathname = (pathname) => pathname.replace(/\/+$/, "").replace(/^\/*/, "/");
+const normalizeSearch = (search) => !search || search === "?" ? "" : search.startsWith("?") ? search : "?" + search;
+const normalizeHash = (hash) => !hash || hash === "#" ? "" : hash.startsWith("#") ? hash : "#" + hash;
+function useHref(to) {
+  !useInRouterContext() ? invariant(false) : void 0;
+  let {
+    basename,
+    navigator: navigator2
+  } = react.exports.useContext(NavigationContext);
+  let {
+    hash,
+    pathname,
+    search
+  } = useResolvedPath(to);
+  let joinedPathname = pathname;
+  if (basename !== "/") {
+    let toPathname = getToPathname(to);
+    let endsWithSlash = toPathname != null && toPathname.endsWith("/");
+    joinedPathname = pathname === "/" ? basename + (endsWithSlash ? "/" : "") : joinPaths([basename, pathname]);
+  }
+  return navigator2.createHref({
+    pathname: joinedPathname,
+    search,
+    hash
+  });
+}
 function useInRouterContext() {
   return react.exports.useContext(LocationContext) != null;
+}
+function useLocation() {
+  !useInRouterContext() ? invariant(false) : void 0;
+  return react.exports.useContext(LocationContext).location;
+}
+function useNavigate() {
+  !useInRouterContext() ? invariant(false) : void 0;
+  let {
+    basename,
+    navigator: navigator2
+  } = react.exports.useContext(NavigationContext);
+  let {
+    matches
+  } = react.exports.useContext(RouteContext);
+  let {
+    pathname: locationPathname
+  } = useLocation();
+  let routePathnamesJson = JSON.stringify(matches.map((match) => match.pathnameBase));
+  let activeRef = react.exports.useRef(false);
+  react.exports.useEffect(() => {
+    activeRef.current = true;
+  });
+  let navigate = react.exports.useCallback(function(to, options) {
+    if (options === void 0) {
+      options = {};
+    }
+    if (!activeRef.current)
+      return;
+    if (typeof to === "number") {
+      navigator2.go(to);
+      return;
+    }
+    let path = resolveTo(to, JSON.parse(routePathnamesJson), locationPathname);
+    if (basename !== "/") {
+      path.pathname = joinPaths([basename, path.pathname]);
+    }
+    (!!options.replace ? navigator2.replace : navigator2.push)(path, options.state);
+  }, [basename, navigator2, routePathnamesJson, locationPathname]);
+  return navigate;
+}
+function useParams() {
+  let {
+    matches
+  } = react.exports.useContext(RouteContext);
+  let routeMatch = matches[matches.length - 1];
+  return routeMatch ? routeMatch.params : {};
+}
+function useResolvedPath(to) {
+  let {
+    matches
+  } = react.exports.useContext(RouteContext);
+  let {
+    pathname: locationPathname
+  } = useLocation();
+  let routePathnamesJson = JSON.stringify(matches.map((match) => match.pathnameBase));
+  return react.exports.useMemo(() => resolveTo(to, JSON.parse(routePathnamesJson), locationPathname), [to, routePathnamesJson, locationPathname]);
+}
+function useRoutes(routes, locationArg) {
+  !useInRouterContext() ? invariant(false) : void 0;
+  let {
+    matches: parentMatches
+  } = react.exports.useContext(RouteContext);
+  let routeMatch = parentMatches[parentMatches.length - 1];
+  let parentParams = routeMatch ? routeMatch.params : {};
+  routeMatch ? routeMatch.pathname : "/";
+  let parentPathnameBase = routeMatch ? routeMatch.pathnameBase : "/";
+  routeMatch && routeMatch.route;
+  let locationFromContext = useLocation();
+  let location;
+  if (locationArg) {
+    var _parsedLocationArg$pa;
+    let parsedLocationArg = typeof locationArg === "string" ? parsePath(locationArg) : locationArg;
+    !(parentPathnameBase === "/" || ((_parsedLocationArg$pa = parsedLocationArg.pathname) == null ? void 0 : _parsedLocationArg$pa.startsWith(parentPathnameBase))) ? invariant(false) : void 0;
+    location = parsedLocationArg;
+  } else {
+    location = locationFromContext;
+  }
+  let pathname = location.pathname || "/";
+  let remainingPathname = parentPathnameBase === "/" ? pathname : pathname.slice(parentPathnameBase.length) || "/";
+  let matches = matchRoutes(routes, {
+    pathname: remainingPathname
+  });
+  return _renderMatches(matches && matches.map((match) => Object.assign({}, match, {
+    params: Object.assign({}, parentParams, match.params),
+    pathname: joinPaths([parentPathnameBase, match.pathname]),
+    pathnameBase: match.pathnameBase === "/" ? parentPathnameBase : joinPaths([parentPathnameBase, match.pathnameBase])
+  })), parentMatches);
+}
+function _renderMatches(matches, parentMatches) {
+  if (parentMatches === void 0) {
+    parentMatches = [];
+  }
+  if (matches == null)
+    return null;
+  return matches.reduceRight((outlet, match, index2) => {
+    return /* @__PURE__ */ react.exports.createElement(RouteContext.Provider, {
+      children: match.route.element !== void 0 ? match.route.element : outlet,
+      value: {
+        outlet,
+        matches: parentMatches.concat(matches.slice(0, index2 + 1))
+      }
+    });
+  }, null);
+}
+function Route(_props) {
+  invariant(false);
 }
 function Router(_ref3) {
   let {
@@ -7882,6 +8244,37 @@ function Router(_ref3) {
     }
   }));
 }
+function Routes(_ref4) {
+  let {
+    children,
+    location
+  } = _ref4;
+  return useRoutes(createRoutesFromChildren(children), location);
+}
+function createRoutesFromChildren(children) {
+  let routes = [];
+  react.exports.Children.forEach(children, (element) => {
+    if (!/* @__PURE__ */ react.exports.isValidElement(element)) {
+      return;
+    }
+    if (element.type === react.exports.Fragment) {
+      routes.push.apply(routes, createRoutesFromChildren(element.props.children));
+      return;
+    }
+    !(element.type === Route) ? invariant(false) : void 0;
+    let route = {
+      caseSensitive: element.props.caseSensitive,
+      element: element.props.element,
+      index: element.props.index,
+      path: element.props.path
+    };
+    if (element.props.children) {
+      route.children = createRoutesFromChildren(element.props.children);
+    }
+    routes.push(route);
+  });
+  return routes;
+}
 /**
  * React Router DOM v6.3.0
  *
@@ -7892,6 +8285,35 @@ function Router(_ref3) {
  *
  * @license MIT
  */
+function _extends() {
+  _extends = Object.assign || function(target) {
+    for (var i = 1; i < arguments.length; i++) {
+      var source = arguments[i];
+      for (var key in source) {
+        if (Object.prototype.hasOwnProperty.call(source, key)) {
+          target[key] = source[key];
+        }
+      }
+    }
+    return target;
+  };
+  return _extends.apply(this, arguments);
+}
+function _objectWithoutPropertiesLoose(source, excluded) {
+  if (source == null)
+    return {};
+  var target = {};
+  var sourceKeys = Object.keys(source);
+  var key, i;
+  for (i = 0; i < sourceKeys.length; i++) {
+    key = sourceKeys[i];
+    if (excluded.indexOf(key) >= 0)
+      continue;
+    target[key] = source[key];
+  }
+  return target;
+}
+const _excluded = ["onClick", "reloadDocument", "replace", "state", "target", "to"];
 function BrowserRouter(_ref) {
   let {
     basename,
@@ -7917,6 +8339,90 @@ function BrowserRouter(_ref) {
     navigationType: state.action,
     navigator: history
   });
+}
+function isModifiedEvent(event) {
+  return !!(event.metaKey || event.altKey || event.ctrlKey || event.shiftKey);
+}
+const Link = /* @__PURE__ */ react.exports.forwardRef(function LinkWithRef(_ref4, ref) {
+  let {
+    onClick,
+    reloadDocument,
+    replace = false,
+    state,
+    target,
+    to
+  } = _ref4, rest = _objectWithoutPropertiesLoose(_ref4, _excluded);
+  let href = useHref(to);
+  let internalOnClick = useLinkClickHandler(to, {
+    replace,
+    state,
+    target
+  });
+  function handleClick(event) {
+    if (onClick)
+      onClick(event);
+    if (!event.defaultPrevented && !reloadDocument) {
+      internalOnClick(event);
+    }
+  }
+  return /* @__PURE__ */ react.exports.createElement("a", _extends({}, rest, {
+    href,
+    onClick: handleClick,
+    ref,
+    target
+  }));
+});
+function useLinkClickHandler(to, _temp) {
+  let {
+    target,
+    replace: replaceProp,
+    state
+  } = _temp === void 0 ? {} : _temp;
+  let navigate = useNavigate();
+  let location = useLocation();
+  let path = useResolvedPath(to);
+  return react.exports.useCallback((event) => {
+    if (event.button === 0 && (!target || target === "_self") && !isModifiedEvent(event)) {
+      event.preventDefault();
+      let replace = !!replaceProp || createPath(location) === createPath(path);
+      navigate(to, {
+        replace,
+        state
+      });
+    }
+  }, [location, navigate, path, replaceProp, state, target, to]);
+}
+const subscriptions = /* @__PURE__ */ new Set();
+let userData = {
+  name: "\u0418\u0432\u0430\u043D",
+  surname: "\u0418\u0432\u0430\u043D\u043E\u0432",
+  tel: "89999999999",
+  email: "test@test.ru",
+  dateOfBirth: "04-04-1991",
+  password: "1234",
+  isAuth: true,
+  familyGroup: [{
+    name: "\u041F\u0435\u0442\u044F",
+    surname: "\u041F\u0435\u0442\u0440\u043E\u0432",
+    tel: "89999999999",
+    email: "petrov@test.ru",
+    dateOfBirth: "01-01-1991",
+    password: "1234",
+    isAuth: false,
+    familyGroup: [],
+    purchased\u0421ourses: []
+  }],
+  purchased\u0421ourses: []
+};
+function setCurrentUser(user) {
+  userData = user;
+  subscriptions.forEach((onChange) => onChange());
+}
+function useCurrentUser() {
+  return React.useSyncExternalStore((onChange) => {
+    subscriptions.add(onChange);
+    return () => subscriptions.delete(onChange);
+  }, () => userData, () => userData);
 }
 var jsxRuntime = { exports: {} };
 var reactJsxRuntime_production_min = {};
@@ -7950,75 +8456,309 @@ reactJsxRuntime_production_min.jsxs = q;
     module.exports = reactJsxRuntime_production_min;
   }
 })(jsxRuntime);
+const Fragment = jsxRuntime.exports.Fragment;
 const jsx = jsxRuntime.exports.jsx;
 const jsxs = jsxRuntime.exports.jsxs;
-const Footer = () => {
-  return /* @__PURE__ */ jsxs("footer", {
-    className: "justify-center items-center",
-    children: ["\xA9 ", new Date().getFullYear(), " - ", /* @__PURE__ */ jsx("a", {
-      href: "https://jonlu.ca",
-      children: "JonLuca DeCaro"
-    }), " -", " ", /* @__PURE__ */ jsx("a", {
-      className: "p-1",
-      href: "https://github.com/jonluca/vite-typescript-ssr-react",
-      children: "Repo"
+const Header = () => {
+  const user = useCurrentUser();
+  return /* @__PURE__ */ jsx("header", {
+    className: "h-16 py-4 px-4 shadow flex",
+    children: /* @__PURE__ */ jsxs("div", {
+      className: "container flex justify-between mx-auto items-center",
+      children: [/* @__PURE__ */ jsx("div", {
+        children: /* @__PURE__ */ jsx(Link, {
+          to: "/",
+          children: "Logo"
+        })
+      }), /* @__PURE__ */ jsx("div", {
+        children: /* @__PURE__ */ jsxs("nav", {
+          children: [/* @__PURE__ */ jsx(Link, {
+            className: "rounded-lg px-3 py-2 text-slate-700 font-medium hover:bg-slate-100 hover:text-slate-900",
+            to: "/subscribe",
+            children: "\u041F\u043E\u0434\u043F\u0438\u0441\u043A\u0438"
+          }), /* @__PURE__ */ jsx(Link, {
+            className: "rounded-lg px-3 py-2 text-slate-700 font-medium hover:bg-slate-100 hover:text-slate-900",
+            to: "/catalog",
+            children: "\u041A\u0430\u0442\u0430\u043B\u043E\u0433"
+          }), /* @__PURE__ */ jsx(Link, {
+            className: "rounded-lg px-3 py-2 text-slate-700 font-medium hover:bg-slate-100 hover:text-slate-900",
+            to: "/profile",
+            children: "\u041F\u0440\u043E\u0444\u0438\u043B\u044C"
+          })]
+        })
+      }), /* @__PURE__ */ jsx("div", {
+        children: user.isAuth ? /* @__PURE__ */ jsx("div", {
+          children: user.name
+        }) : /* @__PURE__ */ jsx(Link, {
+          to: "/sign-in",
+          children: "\u0412\u043E\u0439\u0442\u0438"
+        })
+      })]
+    })
+  });
+};
+const Main = () => {
+  return /* @__PURE__ */ jsx("div", {
+    children: /* @__PURE__ */ jsx("h1", {
+      className: "text-2xl font-medium",
+      children: "\u0413\u043B\u0430\u0432\u043D\u0430\u044F \u0441\u0442\u0440\u0430\u043D\u0438\u0446\u0430"
+    })
+  });
+};
+const programms = [{
+  id: 1,
+  name: "\u041E\u0431\u0440\u0430\u0437\u043E\u0432\u0430\u0442\u0435\u043B\u044C\u043D\u0430\u044F \u043F\u0440\u043E\u0433\u0440\u0430\u043C\u043C\u0430 1",
+  description: "\u041E\u043F\u0438\u0441\u0430\u043D\u0438\u0435 \u043E\u0431\u0440\u0430\u0437\u043E\u0432\u0430\u0442\u0435\u043B\u044C\u043D\u043E\u0439 \u043F\u0440\u043E\u0433\u0440\u0430\u043C\u043C\u044B 1",
+  freepart: "\u0411\u0415\u0421\u041F\u041B\u0410\u0422\u041D\u0410\u042F \u0427\u0410\u0421\u0422\u042C \u041A\u041E\u041D\u0422\u0415\u041D\u0422\u0410 1"
+}, {
+  id: 2,
+  name: "\u041E\u0431\u0440\u0430\u0437\u043E\u0432\u0430\u0442\u0435\u043B\u044C\u043D\u0430\u044F \u043F\u0440\u043E\u0433\u0440\u0430\u043C\u043C\u0430 2",
+  description: "\u041E\u043F\u0438\u0441\u0430\u043D\u0438\u0435 \u043E\u0431\u0440\u0430\u0437\u043E\u0432\u0430\u0442\u0435\u043B\u044C\u043D\u043E\u0439 \u043F\u0440\u043E\u0433\u0440\u0430\u043C\u043C\u044B 2",
+  freepart: "\u0411\u0415\u0421\u041F\u041B\u0410\u0422\u041D\u0410\u042F \u0427\u0410\u0421\u0422\u042C \u041A\u041E\u041D\u0422\u0415\u041D\u0422\u0410 2"
+}, {
+  id: 3,
+  name: "\u041E\u0431\u0440\u0430\u0437\u043E\u0432\u0430\u0442\u0435\u043B\u044C\u043D\u0430\u044F \u043F\u0440\u043E\u0433\u0440\u0430\u043C\u043C\u0430 3",
+  description: "\u041E\u043F\u0438\u0441\u0430\u043D\u0438\u0435 \u043E\u0431\u0440\u0430\u0437\u043E\u0432\u0430\u0442\u0435\u043B\u044C\u043D\u043E\u0439 \u043F\u0440\u043E\u0433\u0440\u0430\u043C\u043C\u044B 3",
+  freepart: "\u0411\u0415\u0421\u041F\u041B\u0410\u0422\u041D\u0410\u042F \u0427\u0410\u0421\u0422\u042C \u041A\u041E\u041D\u0422\u0415\u041D\u0422\u0410 3"
+}];
+const Catalog = () => {
+  const courses = programms.map((p2) => /* @__PURE__ */ jsx(Link, {
+    className: "py-3 hover:text-orange-600 duration-75",
+    to: `/catalog/${p2.id}`,
+    children: p2.name
+  }, p2.id));
+  return /* @__PURE__ */ jsxs("div", {
+    children: [/* @__PURE__ */ jsx("h1", {
+      className: "text-2xl font-medium mb-5",
+      children: "\u041A\u0430\u0442\u0430\u043B\u043E\u0433"
+    }), /* @__PURE__ */ jsx("div", {
+      className: "flex flex-col",
+      children: courses
     })]
   });
 };
-const defaultVal = {
-  name: "",
-  setName: () => {
-  }
-};
-const context = React.createContext(defaultVal);
-const {
-  Provider
-} = context;
-const ContextWrapper = ({
-  children
+const Button = ({
+  children,
+  ...props
 }) => {
-  const [name, setName] = react.exports.useState(defaultVal.name);
-  return /* @__PURE__ */ jsx(Provider, {
-    value: {
-      name,
-      setName
-    },
+  return /* @__PURE__ */ jsx("button", {
+    ...props,
     children
   });
 };
-const useAppContext = () => react.exports.useContext(context);
-const Main = () => {
-  const {
-    name,
-    setName
-  } = useAppContext();
-  return /* @__PURE__ */ jsxs("div", {
-    className: "flex bg-white-100 font-sans items-center flex-col justify-between h-screen",
-    children: [/* @__PURE__ */ jsxs("div", {
-      className: "flex items-center flex-col pt-10",
-      children: [/* @__PURE__ */ jsxs("h1", {
-        className: "font-bold text-gray-900 text-5xl lg:text-7xl text-center ",
-        children: ["Hi", name ? `, ${name}!` : ""]
-      }), /* @__PURE__ */ jsx("h2", {
-        className: "w-2/5 p-5 items-center flex align-middle text-center min-w-[320px]",
-        style: {
-          color: "green"
-        },
-        children: "This is a Vite React SSR Tailwind boilerplate!"
-      }), /* @__PURE__ */ jsx("input", {
-        placeholder: "Enter your name",
-        onChange: (e) => setName(e.currentTarget.value),
-        style: {
-          background: "#8080802e"
-        },
-        className: "focus:ring-indigo-500 focus:border-indigo-500 block w-full text-2xl border-gray-300 rounded-md p-2"
+const CatalogDetail = () => {
+  var _a;
+  const param = useParams();
+  const id2 = Number(param.id);
+  const [post, setPost] = react.exports.useState(null);
+  const user = useCurrentUser();
+  react.exports.useEffect(() => {
+    if (id2) {
+      setPost(programms.filter((p2) => p2.id === id2)[0]);
+    }
+  }, [id2, user.purchased\u0421ourses]);
+  const onFreePartBtnClick = () => {
+    if (post) {
+      setCurrentUser({
+        ...user,
+        purchased\u0421ourses: [...user.purchased\u0421ourses, {
+          ...post,
+          status: "free"
+        }]
+      });
+    }
+  };
+  const isFree = (_a = user.purchased\u0421ourses) == null ? void 0 : _a.filter((c) => c.id === (post == null ? void 0 : post.id));
+  return /* @__PURE__ */ jsx("div", {
+    children: post && /* @__PURE__ */ jsxs("div", {
+      children: [/* @__PURE__ */ jsx("div", {
+        className: "text-2xl mb-5",
+        children: post.name
+      }), /* @__PURE__ */ jsxs("div", {
+        className: "text-gray-500",
+        children: [/* @__PURE__ */ jsx("p", {
+          children: post.description
+        }), (isFree == null ? void 0 : isFree.length) !== 0 && /* @__PURE__ */ jsx("p", {
+          children: post.freepart
+        })]
+      }), /* @__PURE__ */ jsxs("div", {
+        className: "mt-12",
+        children: [(isFree == null ? void 0 : isFree.length) === 0 && /* @__PURE__ */ jsx(Button, {
+          className: "bg-transparent hover:bg-orange-600 border-2 border-orange-600 text-black hover:text-white rounded-lg px-5 py-2 text-black mr-5 duration-75",
+          onClick: onFreePartBtnClick,
+          children: "\u041F\u043E\u043F\u0440\u043E\u0431\u043E\u0432\u0430\u0442\u044C \u0431\u0435\u0441\u043F\u043B\u0430\u0442\u043D\u043E"
+        }), /* @__PURE__ */ jsx(Link, {
+          className: "bg-orange-600 border-4 border-orange-600 hover:bg-orange-400 hover:border-orange-400 rounded-lg px-5 py-2 text-white duration-75",
+          to: "/payment",
+          state: post,
+          children: "\u041F\u0440\u0438\u043E\u0431\u0440\u0435\u0441\u0442\u0438"
+        })]
       })]
-    }), /* @__PURE__ */ jsx(Footer, {})]
+    })
+  });
+};
+const Profile = () => {
+  const user = useCurrentUser();
+  return /* @__PURE__ */ jsxs("div", {
+    children: [/* @__PURE__ */ jsx("h1", {
+      className: "text-2xl font-medium mb-5",
+      children: "\u041F\u0440\u043E\u0444\u0438\u043B\u044C"
+    }), /* @__PURE__ */ jsxs("div", {
+      children: ["\u0418\u043C\u044F: ", /* @__PURE__ */ jsx("strong", {
+        children: user.name
+      })]
+    }), /* @__PURE__ */ jsxs("div", {
+      children: ["\u0424\u0430\u043C\u0438\u043B\u0438\u044F: ", /* @__PURE__ */ jsx("strong", {
+        children: user.surname
+      })]
+    }), /* @__PURE__ */ jsxs("div", {
+      children: ["\u0414\u0430\u0442\u0430 \u0440\u043E\u0436\u0434\u0435\u043D\u0438\u044F: ", /* @__PURE__ */ jsx("strong", {
+        children: user.dateOfBirth
+      })]
+    }), /* @__PURE__ */ jsxs("div", {
+      children: ["\u0422\u0435\u043B\u0435\u0444\u043E\u043D: ", /* @__PURE__ */ jsx("strong", {
+        children: user.tel
+      })]
+    }), /* @__PURE__ */ jsxs("div", {
+      children: ["Email: ", /* @__PURE__ */ jsx("strong", {
+        children: user.email
+      })]
+    }), /* @__PURE__ */ jsx("div", {
+      className: "mb-12 mt-5",
+      children: "\u041E\u0441\u043D\u043E\u0432\u043D\u0430\u044F \u0441\u0442\u0440\u0430\u043D\u0438\u0446\u0430 \u043F\u0440\u043E\u0444\u0438\u043B\u044F \u0441 \u0434\u0430\u043D\u043D\u044B\u043C\u0438 \u0438\u0437 \u0441\u0435\u0441\u0441\u0438\u0438 \u0430\u0432\u0442\u043E\u0440\u0438\u0437\u0430\u0446\u0438\u0438"
+    }), /* @__PURE__ */ jsx(Link, {
+      className: "bg-orange-600 hover:bg-orange-400 rounded-lg px-5 py-3 text-white",
+      to: "/activate-promocode",
+      children: "\u0410\u043A\u0442\u0438\u0432\u0430\u0446\u0438\u044F \u043A\u043E\u0434\u0430"
+    })]
+  });
+};
+const ShareWithFamily = ({
+  onClickYes,
+  onClickNo
+}) => {
+  return /* @__PURE__ */ jsxs("div", {
+    children: [/* @__PURE__ */ jsx("div", {
+      children: "\u041F\u0440\u0438\u043E\u0431\u0440\u0435\u0441\u0442\u0438 \u0438 \u043F\u043E\u0434\u0435\u043B\u0438\u0442\u044C\u0441\u044F \u0441 \u0441\u0435\u043C\u0435\u0439\u043D\u043E\u0439 \u0433\u0440\u0443\u043F\u043F\u043E\u0439?"
+    }), /* @__PURE__ */ jsx(Button, {
+      className: "bg-orange-600 hover:bg-orange-400 rounded-lg px-5 py-3 text-white mt-10 mr-3",
+      onClick: onClickYes,
+      children: "\u0414\u0430"
+    }), /* @__PURE__ */ jsx(Button, {
+      className: "bg-orange-600 hover:bg-orange-400 rounded-lg px-5 py-3 text-white mt-10",
+      onClick: onClickNo,
+      children: "\u041D\u0435\u0442"
+    })]
+  });
+};
+const Payment = () => {
+  var _a;
+  const location = useLocation();
+  const post = location.state;
+  const user = useCurrentUser();
+  const [toggle, setToggle] = react.exports.useState(true);
+  const [shareWithFamilyGroup, setShareWithFamilyGroup] = react.exports.useState(false);
+  const onClickYes = () => {
+    setShareWithFamilyGroup(true);
+    setToggle(false);
+  };
+  const onClickNo = () => {
+    setToggle(false);
+  };
+  const [invoice, setInvoice] = react.exports.useState(null);
+  const nav = useNavigate();
+  react.exports.useEffect(() => {
+    if (!post) {
+      nav("/");
+    }
+  }, [post]);
+  return /* @__PURE__ */ jsx("div", {
+    children: ((_a = user.familyGroup) == null ? void 0 : _a.length) && toggle ? /* @__PURE__ */ jsx(ShareWithFamily, {
+      onClickYes,
+      onClickNo
+    }) : /* @__PURE__ */ jsxs("div", {
+      children: [/* @__PURE__ */ jsxs("p", {
+        className: "text-2xl mb-5",
+        children: ["\u041F\u043E\u043A\u0443\u043F\u043A\u0430 \u043A\u0443\u0440\u0441\u0430 ", post.name, ". ", shareWithFamilyGroup && /* @__PURE__ */ jsx("div", {
+          className: "text-xs",
+          children: "\u0414\u0435\u043B\u0438\u043C\u0441\u044F \u0441 \u0441\u0435\u043C\u0435\u0439\u043D\u043E\u0439 \u0433\u0440\u0443\u043F\u043F\u043E\u0439"
+        })]
+      }), /* @__PURE__ */ jsxs("p", {
+        children: [/* @__PURE__ */ jsx("input", {
+          type: "text",
+          className: "block bg-white border border-slate-300 rounded-md py-2 px-3 shadow-sm focus:outline-none focus:border-sky-500 focus:ring-sky-500 focus:ring-1 sm:text-sm",
+          value: invoice == null ? void 0 : invoice.card,
+          onChange: (e) => setInvoice({
+            ...invoice,
+            card: e.target.value
+          }),
+          placeholder: "\u041D\u043E\u043C\u0435\u0440 \u043A\u0430\u0440\u0442\u044B"
+        }), /* @__PURE__ */ jsx(Button, {
+          className: "bg-orange-600 border-4 border-orange-600 hover:bg-orange-400 hover:border-orange-400 rounded-lg px-5 py-2 text-white duration-75 mt-5",
+          children: "\u041E\u043F\u043B\u0430\u0442\u0438\u0442\u044C"
+        })]
+      })]
+    })
+  });
+};
+const ActivatePromocode = () => {
+  var _a;
+  const user = useCurrentUser();
+  const [toggle, setToggle] = react.exports.useState(true);
+  const [shareWithFamilyGroup, setShareWithFamilyGroup] = react.exports.useState(false);
+  const onClickYes = () => {
+    setShareWithFamilyGroup(true);
+    setToggle(false);
+  };
+  const onClickNo = () => {
+    setToggle(false);
+  };
+  return /* @__PURE__ */ jsx(Fragment, {
+    children: ((_a = user.familyGroup) == null ? void 0 : _a.length) && toggle ? /* @__PURE__ */ jsx(ShareWithFamily, {
+      onClickYes,
+      onClickNo
+    }) : /* @__PURE__ */ jsx("div", {
+      children: "\u0410\u043A\u0442\u0438\u0432\u0430\u0446\u0438\u044F \u043F\u0440\u043E\u043C\u043E\u043A\u043E\u0434\u0430"
+    })
   });
 };
 const App = () => {
-  return /* @__PURE__ */ jsx(ContextWrapper, {
-    children: /* @__PURE__ */ jsx(Main, {})
+  const {
+    isAuth
+  } = useCurrentUser();
+  return /* @__PURE__ */ jsxs(Fragment, {
+    children: [/* @__PURE__ */ jsx(Header, {}), /* @__PURE__ */ jsx("div", {
+      className: "container mx-auto flex items-center pt-12",
+      children: /* @__PURE__ */ jsxs(Routes, {
+        children: [/* @__PURE__ */ jsx(Route, {
+          path: "/",
+          element: isAuth ? /* @__PURE__ */ jsx(Main, {}) : /* @__PURE__ */ jsx("div", {
+            children: "\u0424\u043E\u0440\u043C\u0430 \u0430\u0432\u0442\u043E\u0440\u0438\u0437\u0430\u0446\u0438\u0438"
+          })
+        }), /* @__PURE__ */ jsx(Route, {
+          path: "/subscribe",
+          element: /* @__PURE__ */ jsx(Main, {})
+        }), /* @__PURE__ */ jsx(Route, {
+          path: "/catalog",
+          element: /* @__PURE__ */ jsx(Catalog, {})
+        }), /* @__PURE__ */ jsx(Route, {
+          path: "/catalog/:id",
+          element: /* @__PURE__ */ jsx(CatalogDetail, {})
+        }), /* @__PURE__ */ jsx(Route, {
+          path: "/profile",
+          element: /* @__PURE__ */ jsx(Profile, {})
+        }), /* @__PURE__ */ jsx(Route, {
+          path: "/sign-in",
+          element: /* @__PURE__ */ jsx(Main, {})
+        }), /* @__PURE__ */ jsx(Route, {
+          path: "/payment",
+          element: /* @__PURE__ */ jsx(Payment, {})
+        }), /* @__PURE__ */ jsx(Route, {
+          path: "/activate-promocode",
+          element: /* @__PURE__ */ jsx(ActivatePromocode, {})
+        })]
+      })
+    })]
   });
 };
 const index = "";
